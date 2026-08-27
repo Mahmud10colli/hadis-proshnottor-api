@@ -62,7 +62,10 @@ def load_book(book):
             "hadithnumber": number,
             "arabicnumber": h.get("arabicnumber"),
             "arabic": h.get("text"),
-            "bengali": bn.get("text"),
+
+            # Bengali field-এর নতুন নাম
+            "bnText": bn.get("text"),
+
             "book": info["name"],
             "chapter": chapter,
             "reference": h.get("reference"),
@@ -128,10 +131,10 @@ def search():
             for item in results:
 
                 arabic = item.get("arabic") or ""
-                bengali = item.get("bengali") or ""
+                bn_text = item.get("bnText") or ""
 
                 if (
-                    query.lower() in bengali.lower()
+                    query.lower() in bn_text.lower()
                     or query.lower() in arabic.lower()
                 ):
                     all_results.append(item)
