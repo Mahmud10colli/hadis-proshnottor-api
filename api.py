@@ -33,7 +33,7 @@ def hadith(book, number):
 
     if book not in BOOKS:
         return jsonify({
-            "error": "Book not supported yet"
+            "error": "Book not supported"
         }), 404
 
     info = BOOKS[book]
@@ -48,6 +48,9 @@ def hadith(book, number):
         arabic_hadith = arabic_data.get("hadiths", [{}])[0]
         bengali_hadith = bengali_data.get("hadiths", [{}])[0]
 
+        metadata = arabic_data.get("metadata", {})
+        section = metadata.get("section", {})
+
         result = {
             "hadithnumber": arabic_hadith.get("hadithnumber"),
             "arabicnumber": arabic_hadith.get("arabicnumber"),
@@ -57,14 +60,15 @@ def hadith(book, number):
 
             "book": info["name"],
 
+            "chapter": section,
+
             "reference": arabic_hadith.get("reference"),
 
             "grades": arabic_hadith.get("grades", []),
 
-            "arabic_metadata": arabic_data.get("metadata"),
-            "bengali_metadata": bengali_data.get("metadata"),
+            "source": "Fawaz Ahmed Hadith API",
 
-            "source": "Fawaz Ahmed Hadith API"
+            "metadata": metadata
         }
 
         return jsonify(result)
