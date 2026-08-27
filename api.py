@@ -7,17 +7,72 @@ BASE_URL = "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions"
 
 BOOKS = {
     "bukhari": {
+        "name": "Sahih al-Bukhari",
         "arabic": "ara-bukhari",
-        "bengali": "ben-bukhari",
-        "name": "Sahih al-Bukhari"
+        "bengali": "ben-bukhari"
     }
 }
 
+cache = {}
+
 
 def get_json(url):
-    response = requests.get(url, timeout=20)
+    response = requests.get(url, timeout=60)
     response.raise_for_status()
     return response.json()
+
+
+def load_book(book):
+    if book in cache:
+        return cache[book]
+
+    info = BOOKS[book]
+
+    arabic_data = get_json(
+        f"{BASE_URL}/{info['arabic']}.json"
+    )
+
+    bengali_data = get_json(
+        f"{BASE_URL}/{info['bengali']}.json"
+    )
+
+    arabic_hadiths = arabic_data.get("hadiths", [])
+    bengali_hadiths = bengali_data.get("hadiths", [])
+
+    bengali_by_number = {
+        h.get("hadithnumber"): h
+        for h in bengali_hadiths
+    }
+
+    results = []
+
+    for h in arabic_hadiths:
+        number = h.get("hadithnumber")
+        bn = bengali_by_number.get(number, {})
+
+        metadata = arabic_data.get("metadata", {})
+        section = metadata.get("section", {})
+
+        chapter = ""
+
+        if isinstance(section, dict) and section:
+            chapter = next(iter(section.values()))
+
+        results.append({
+            "hadithnumber": number,
+            "arabicnumber": h.get("arabicnumber"),
+            "arabic": h.get("text"),
+            "bengali": bn.get("text"),
+            "book": info["name"],
+            "chapter": chapter,
+            "reference": h.get("reference"),
+            "grades": h.get("grades", []),
+            "source": "Fawaz Ahmed Hadith API"
+        })
+
+    cache[book] = results
+
+    return results
 
 
 @app.route("/")
@@ -32,39 +87,25 @@ def home():
 def hadith(book, number):
 
     if book not in BOOKS:
-        return jsonify({"error": "Book not supported"}), 404
-
-    info = BOOKS[book]
+        return jsonify({
+            "error": "Book not supported"
+        }), 404
 
     try:
-        arabic_data = get_json(
-            f"{BASE_URL}/{info['arabic']}/{number}.json"
-        )
+        results = load_book(book)
 
-        bengali_data = get_json(
-            f"{BASE_URL}/{info['bengali']}/{number}.json"
-        )
-
-        arabic_hadith = arabic_data.get("hadiths", [{}])[0]
-        bengali_hadith = bengali_data.get("hadiths", [{}])[0]
-
-        metadata = arabic_data.get("metadata", {})
-        section = metadata.get("section", {})
+        for item in results:
+            if item["hadithnumber"] == number:
+                return jsonify(item)
 
         return jsonify({
-            "hadithnumber": arabic_hadith.get("hadithnumber"),
-            "arabicnumber": arabic_hadith.get("arabicnumber"),
-            "arabic": arabic_hadith.get("text"),
-            "bengali": bengali_hadith.get("text"),
-            "book": info["name"],
-            "chapter": section,
-            "reference": arabic_hadith.get("reference"),
-            "grades": arabic_hadith.get("grades", []),
-            "source": "Fawaz Ahmed Hadith API"
-        })
+            "error": "Hadith not found"
+        }), 404
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e)
+        }), 500
 
 
 @app.route("/search")
@@ -74,50 +115,40 @@ def search():
 
     if not query:
         return jsonify({
+            "total": 0,
             "results": []
         })
 
-    results = []
+    try:
+        all_results = []
 
-    # বর্তমানে Bukhari-এর প্রথম 100 হাদিসে অনুসন্ধান
-    # পরবর্তীতে আমরা সব হাদিসের জন্য এটিকে উন্নত করব।
-    for number in range(1, 101):
+        for book in BOOKS:
+            results = load_book(book)
 
-        try:
-            data = get_json(
-                f"{BASE_URL}/ben-bukhari/{number}.json"
-            )
+            for item in results:
 
-            hadith = data.get("hadiths", [{}])[0]
-            text = hadith.get("text", "")
+                arabic = item.get("arabic") or ""
+                bengali = item.get("bengali") or ""
 
-            if query.lower() in text.lower():
+                if (
+                    query.lower() in bengali.lower()
+                    or query.lower() in arabic.lower()
+                ):
+                    all_results.append(item)
 
-                full = get_json(
-                    f"{BASE_URL}/ara-bukhari/{number}.json"
-                )
+        return jsonify({
+            "total": len(all_results),
+            "results": all_results
+        })
 
-                arabic_hadith = full.get("hadiths", [{}])[0]
-                metadata = full.get("metadata", {})
-
-                results.append({
-                    "hadithnumber": arabic_hadith.get("hadithnumber"),
-                    "arabic": arabic_hadith.get("text"),
-                    "bengali": text,
-                    "book": "Sahih al-Bukhari",
-                    "chapter": metadata.get("section", {}),
-                    "reference": arabic_hadith.get("reference"),
-                    "source": "Fawaz Ahmed Hadith API"
-                })
-
-        except Exception:
-            continue
-
-    return jsonify({
-        "total": len(results),
-        "results": results
-    })
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(
+        host="0.0.0.0",
+        port=5000
+    )
