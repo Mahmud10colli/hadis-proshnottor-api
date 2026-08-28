@@ -1,10 +1,9 @@
-```python
 from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
 
-BASE_URL = "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1"
+BASE_URL = "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions"
 
 BOOKS = {
     "bukhari": {
@@ -45,108 +44,69 @@ BOOKS = {
 }
 
 
-def get_json(path):
-
-    urls = [
-        f"{BASE_URL}/{path}.min.json",
-        f"{BASE_URL}/{path}.json"
-    ]
-
-    for url in urls:
-
-        try:
-
-            response = requests.get(
-                url,
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                return response.json()
-
-        except Exception:
-            pass
-
-    return {}
+def get_json(url):
+    response = requests.get(url, timeout=20)
+    response.raise_for_status()
+    return response.json()
 
 
 def get_hadith(book, number):
+    if book not in BOOKS:
+        return None
 
     info = BOOKS[book]
 
-    arabic_data = get_json(
-        f"editions/{info['arabic']}/{number}"
-    )
+    arabic_url = f"{BASE_URL}/{info['arabic']}/{number}.json"
+    bengali_url = f"{BASE_URL}/{info['bengali']}/{number}.json"
 
-    bengali_data = get_json(
-        f"editions/{info['bengali']}/{number}"
-    )
+    try:
+        arabic_data = get_json(arabic_url)
+    except Exception:
+        arabic_data = {}
 
-    arabic_list = arabic_data.get(
-        "hadiths",
-        []
-    )
+    try:
+        bengali_data = get_json(bengali_url)
+    except Exception:
+        bengali_data = {}
 
-    bengali_list = bengali_data.get(
-        "hadiths",
-        []
-    )
+    arabic_hadith = {}
+    bengali_hadith = {}
 
-    arabic = (
-        arabic_list[0]
-        if arabic_list
-        else {}
-    )
+    if isinstance(arabic_data, dict):
+        hadiths = arabic_data.get("hadiths", [])
+        if hadiths:
+            arabic_hadith = hadiths[0]
 
-    bengali = (
-        bengali_list[0]
-        if bengali_list
-        else {}
-    )
-
-    grades = arabic.get(
-        "grades",
-        []
-    )
-
-    if not grades:
-        grades = bengali.get(
-            "grades",
-            []
-        )
+    if isinstance(bengali_data, dict):
+        hadiths = bengali_data.get("hadiths", [])
+        if hadiths:
+            bengali_hadith = hadiths[0]
 
     return {
-
-        "arabic": arabic.get(
-            "text",
-            ""
-        ),
-
-        "bengali": bengali.get(
-            "text",
-            ""
-        ),
-
         "hadith_number": (
-            arabic.get("hadithnumber")
-            or bengali.get("hadithnumber")
+            arabic_hadith.get("hadithnumber")
+            or bengali_hadith.get("hadithnumber")
             or number
         ),
 
         "arabic_number": (
-            arabic.get("arabicnumber")
-            or bengali.get("arabicnumber")
+            arabic_hadith.get("arabicnumber")
+            or bengali_hadith.get("arabicnumber")
         ),
+
+        "arabic": arabic_hadith.get("text", ""),
+
+        "bengali": bengali_hadith.get("text", ""),
 
         "book": info["name"],
 
         "reference": (
-            arabic.get("reference")
-            or bengali.get("reference")
+            arabic_hadith.get("reference")
+            or bengali_hadith.get("reference")
             or {}
         ),
 
-        "grades": grades,
+        "grades": arabic_hadith.get("grades", []),
 
         "source": "fawazahmed0/hadith-api"
     }
@@ -154,7 +114,6 @@ def get_hadith(book, number):
 
 @app.route("/")
 def home():
-
     return jsonify({
         "status": "ok",
         "message": "Hadis Proshnottor Combined API is running"
@@ -163,118 +122,73 @@ def home():
 
 @app.route("/hadith/<book>/<int:number>")
 def single_hadith(book, number):
+    result = get_hadith(book, number)
 
-    if book not in BOOKS:
-
+    if result is None:
         return jsonify({
             "error": "Unknown book",
-            "available_books": list(
-                BOOKS.keys()
-            )
+            "available_books": list(BOOKS.keys())
         }), 404
 
-    try:
-
-        result = get_hadith(
-            book,
-            number
-        )
-
-        return jsonify(result)
-
-    except Exception as e:
-
-        return jsonify({
-            "error": str(e)
-        }), 500
+    return jsonify(result)
 
 
 @app.route("/hadith/search")
 def search_hadith():
 
-    query = request.args.get(
-        "q",
-        ""
-    ).strip()
-
-    book = request.args.get(
-        "book",
-        "bukhari"
-    ).lower()
+    query = request.args.get("q", "").strip()
+    book = request.args.get("book", "bukhari").strip().lower()
 
     if not query:
-
         return jsonify({
-            "error": "Search query is required"
+            "error": "Search query is required",
+            "example": "/hadith/search?q=namaz&book=bukhari"
         }), 400
 
     if book not in BOOKS:
-
         return jsonify({
             "error": "Unknown book",
-            "available_books": list(
-                BOOKS.keys()
-            )
+            "available_books": list(BOOKS.keys())
         }), 404
 
     info = BOOKS[book]
 
-    arabic_data = get_json(
-        f"editions/{info['arabic']}"
-    )
+    try:
+        arabic_data = get_json(
+            f"{BASE_URL}/{info['arabic']}.json"
+        )
 
-    bengali_data = get_json(
-        f"editions/{info['bengali']}"
-    )
+        bengali_data = get_json(
+            f"{BASE_URL}/{info['bengali']}.json"
+        )
 
-    arabic_hadiths = arabic_data.get(
-        "hadiths",
-        []
-    )
+    except Exception as e:
+        return jsonify({
+            "error": "Could not load hadith data",
+            "details": str(e)
+        }), 502
 
-    bengali_hadiths = bengali_data.get(
-        "hadiths",
-        []
-    )
+    arabic_hadiths = arabic_data.get("hadiths", [])
+    bengali_hadiths = bengali_data.get("hadiths", [])
 
     bengali_by_number = {}
 
     for h in bengali_hadiths:
-
-        number = h.get(
-            "hadithnumber"
-        )
-
+        number = h.get("hadithnumber")
         if number is not None:
-
-            bengali_by_number[
-                str(number)
-            ] = h
-
-    results = []
+            bengali_by_number[str(number)] = h
 
     query_lower = query.lower()
 
+    results = []
+
     for h in arabic_hadiths:
 
-        number = h.get(
-            "hadithnumber"
-        )
+        arabic_text = h.get("text", "")
+        number = h.get("hadithnumber")
 
-        arabic_text = h.get(
-            "text",
-            ""
-        )
-
-        bengali_h = bengali_by_number.get(
-            str(number),
-            {}
-        )
-
-        bengali_text = bengali_h.get(
-            "text",
-            ""
-        )
+        bengali_h = bengali_by_number.get(str(number), {})
+        bengali_text = bengali_h.get("text", "")
 
         if (
             query_lower in arabic_text.lower()
@@ -282,62 +196,31 @@ def search_hadith():
             or query_lower in str(number)
         ):
 
-            grades = h.get(
-                "grades",
-                []
-            )
-
-            if not grades:
-
-                grades = bengali_h.get(
-                    "grades",
-                    []
-                )
-
             results.append({
+                "hadith_number": number,
+
+                "arabic_number": h.get("arabicnumber"),
 
                 "arabic": arabic_text,
 
                 "bengali": bengali_text,
 
-                "hadith_number": number,
-
-                "arabic_number": h.get(
-                    "arabicnumber"
-                ),
-
                 "book": info["name"],
 
-                "reference": (
-                    h.get("reference")
-                    or bengali_h.get(
-                        "reference",
-                        {}
-                    )
-                ),
+                "reference": h.get("reference", {}),
 
-                "grades": grades,
+                "grades": h.get("grades", []),
 
                 "source": "fawazahmed0/hadith-api"
             })
 
     return jsonify({
-
         "query": query,
-
         "book": book,
-
         "count": len(results),
-
         "results": results
-
     })
 
 
 if __name__ == "__main__":
-
-    app.run(
-        host="0.0.0.0",
-        port=10000
-    )
-```
+    app.run(host="0.0.0.0", port=10000)
