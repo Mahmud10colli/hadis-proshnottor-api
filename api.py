@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import re
+from functools import lru_cache
 
 app = Flask(__name__)
 
@@ -46,14 +47,25 @@ BOOKS = {
 }
 
 
-# ---------------------------------------------------------
+# =========================================================
 # HTTP / JSON
-# ---------------------------------------------------------
+# =========================================================
 
+def request_json(url):
+    response = requests.get(
+        url,
+        timeout=30,
+        headers={
+            "User-Agent": "Hadis-Proshnottor-API/3.0"
+        }
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
+@lru_cache(maxsize=50)
 def get_json(edition, number=None):
-    """
-    CDN -> GitHub Raw fallback.
-    """
 
     if number is None:
         urls = [
@@ -70,94 +82,268 @@ def get_json(edition, number=None):
             f"{RAW_URL}/{edition}/{number}.json"
         ]
 
-    last_error = None
+    last_error = "Unknown error"
 
     for url in urls:
         try:
-            response = requests.get(
-                url,
-                timeout=30,
-                headers={
-                    "User-Agent": "Hadis-Proshnottor-API/1.0"
-                }
-            )
-
-            if response.status_code == 200:
-                return response.json()
-
-            last_error = f"HTTP {response.status_code}"
-
+            return request_json(url)
         except Exception as e:
             last_error = str(e)
 
     raise Exception(
-        f"Could not load edition '{edition}'. Last error: {last_error}"
+        f"Could not load edition '{edition}'. "
+        f"Last error: {last_error}"
     )
 
 
-# ---------------------------------------------------------
-# Text helpers
-# ---------------------------------------------------------
+# =========================================================
+# TEXT NORMALIZATION
+# =========================================================
 
 def normalize_text(text):
-    if not text:
+
+    if text is None:
         return ""
 
     text = str(text).lower()
 
-    # Arabic harakat remove
-    text = re.sub(r"[\u064B-\u065F\u0670]", "", text)
+    # Arabic harakat
+    text = re.sub(
+        r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]",
+        "",
+        text
+    )
 
-    # Bengali punctuation / common punctuation
-    text = re.sub(r"[^\w\u0600-\u06FF\u0980-\u09FF\s]", " ", text)
+    # Arabic tatweel
+    text = text.replace("ـ", "")
 
-    # Multiple spaces
+    # Arabic letter normalization
+    text = text.replace("أ", "ا")
+    text = text.replace("إ", "ا")
+    text = text.replace("آ", "ا")
+    text = text.replace("ٱ", "ا")
+
+    # punctuation
+    text = re.sub(
+        r"[^\w\u0600-\u06FF\u0980-\u09FF\s]",
+        " ",
+        text
+    )
+
+    # multiple spaces
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
 
 
+# =========================================================
+# SEARCH VARIANTS
+# =========================================================
+
+SEARCH_MAP = {
+
+    "allah": [
+        "allah",
+        "আল্লাহ",
+        "الله"
+    ],
+
+    "god": [
+        "god",
+        "allah",
+        "আল্লাহ",
+        "الله"
+    ],
+
+    "namaz": [
+        "namaz",
+        "salah",
+        "salat",
+        "prayer",
+        "নামাজ",
+        "সালাত",
+        "নামায",
+        "صلاة",
+        "الصلاة"
+    ],
+
+    "salah": [
+        "salah",
+        "salat",
+        "namaz",
+        "prayer",
+        "নামাজ",
+        "সালাত",
+        "নামায",
+        "صلاة",
+        "الصلاة"
+    ],
+
+    "salat": [
+        "salat",
+        "salah",
+        "namaz",
+        "prayer",
+        "নামাজ",
+        "সালাত",
+        "নামায",
+        "صلاة",
+        "الصلاة"
+    ],
+
+    "prayer": [
+        "prayer",
+        "salah",
+        "salat",
+        "namaz",
+        "নামাজ",
+        "সালাত",
+        "নামায",
+        "صلاة",
+        "الصلاة"
+    ],
+
+    "roza": [
+        "roza",
+        "fasting",
+        "sawm",
+        "রোজা",
+        "রোযা",
+        "সিয়াম",
+        "صيام",
+        "الصيام"
+    ],
+
+    "fasting": [
+        "fasting",
+        "roza",
+        "sawm",
+        "রোজা",
+        "রোযা",
+        "সিয়াম",
+        "صيام",
+        "الصيام"
+    ],
+
+    "sawm": [
+        "sawm",
+        "fasting",
+        "roza",
+        "রোজা",
+        "রোযা",
+        "সিয়াম",
+        "صيام",
+        "الصيام"
+    ],
+
+    "zakat": [
+        "zakat",
+        "যাকাত",
+        "زكاة",
+        "الزكاة"
+    ],
+
+    "hajj": [
+        "hajj",
+        "হজ",
+        "হজ্জ",
+        "حج",
+        "الحج"
+    ],
+
+    "wudu": [
+        "wudu",
+        "ওযু",
+        "অজু",
+        "وضوء"
+    ],
+
+    "ablution": [
+        "ablution",
+        "wudu",
+        "ওযু",
+        "অজু",
+        "وضوء"
+    ],
+
+    "mosque": [
+        "mosque",
+        "মসজিদ",
+        "مسجد"
+    ],
+
+    "masjid": [
+        "masjid",
+        "mosque",
+        "মসজিদ",
+        "مسجد"
+    ],
+
+    "prophet": [
+        "prophet",
+        "নবী",
+        "নবীজি",
+        "রাসূল",
+        "রসূল",
+        "رسول",
+        "النبي"
+    ],
+
+    "muhammad": [
+        "muhammad",
+        "মুহাম্মদ",
+        "মুহাম্মাদ",
+        "محمد"
+    ],
+
+    "islam": [
+        "islam",
+        "ইসলাম",
+        "الإسلام"
+    ],
+
+    "iman": [
+        "iman",
+        "ঈমান",
+        "ইমান",
+        "إيمان"
+    ],
+
+    "faith": [
+        "faith",
+        "iman",
+        "ঈমান",
+        "ইমান",
+        "إيمان"
+    ]
+}
+
+
 def query_variants(query):
-    """
-    User English/Bengali/Arabic যেভাবেই লিখুক,
-    সাধারণ গুরুত্বপূর্ণ শব্দের equivalent search তৈরি করবে।
-    """
 
     q = normalize_text(query)
 
-    variants = {q}
+    variants = set()
 
-    translations = {
-        "allah": ["allah", "আল্লাহ", "الله"],
-        "god": ["god", "allah", "আল্লাহ", "الله"],
-        "namaz": ["namaz", "salah", "salat", "নামাজ", "সালাত", "صلاة", "الصلاة"],
-        "salah": ["salah", "salat", "namaz", "নামাজ", "সালাত", "صلاة", "الصلاة"],
-        "salat": ["salat", "salah", "namaz", "নামাজ", "সালাত", "صلاة", "الصلاة"],
-        "prayer": ["prayer", "salah", "salat", "namaz", "নামাজ", "সালাত", "صلاة"],
-        "roza": ["roza", "fasting", "sawm", "রোজা", "সিয়াম", "صيام", "الصيام"],
-        "fasting": ["fasting", "roza", "sawm", "রোজা", "সিয়াম", "صيام", "الصيام"],
-        "sawm": ["sawm", "fasting", "roza", "রোজা", "সিয়াম", "صيام", "الصيام"],
-        "zakat": ["zakat", "যাকাত", "زكاة", "الزكاة"],
-        "hajj": ["hajj", "হজ", "حج", "الحج"],
-        "wudu": ["wudu", "ওযু", "অজু", "وضوء"],
-        "ablution": ["ablution", "wudu", "ওযু", "অজু", "وضوء"],
-        "mosque": ["mosque", "মসজিদ", "مسجد"],
-        "masjid": ["masjid", "mosque", "মসজিদ", "مسجد"],
-        "prophet": ["prophet", "নবী", "রাসূল", "رسول", "النبي"],
-        "muhammad": ["muhammad", "মুহাম্মদ", "محمد"],
-        "islam": ["islam", "ইসলাম", "الإسلام"],
-        "iman": ["iman", "ঈমান", "إيمان"],
-        "faith": ["faith", "iman", "ঈমান", "إيمان"]
-    }
+    if q:
+        variants.add(q)
 
-    if q in translations:
-        variants.update(translations[q])
+    if q in SEARCH_MAP:
+        for value in SEARCH_MAP[q]:
+            normalized = normalize_text(value)
 
-    return [normalize_text(v) for v in variants if v]
+            if normalized:
+                variants.add(normalized)
+
+    return list(variants)
 
 
 def text_matches(text, variants):
+
     normalized = normalize_text(text)
+
+    if not normalized:
+        return False
 
     for variant in variants:
         if variant and variant in normalized:
@@ -166,53 +352,66 @@ def text_matches(text, variants):
     return False
 
 
-# ---------------------------------------------------------
-# Hadith formatter
-# ---------------------------------------------------------
+# =========================================================
+# HADITH FORMATTER
+# =========================================================
 
-def format_hadith(arabic_hadith, bengali_hadith, book_name):
+def format_hadith(
+    arabic_hadith,
+    bengali_hadith,
+    book_name
+):
 
     arabic_hadith = arabic_hadith or {}
     bengali_hadith = bengali_hadith or {}
 
+    reference = (
+        arabic_hadith.get("reference")
+        or bengali_hadith.get("reference")
+        or {}
+    )
+
+    grades = (
+        arabic_hadith.get("grades")
+        or bengali_hadith.get("grades")
+        or []
+    )
+
     return {
-        "hadith_number": (
+
+        "hadith_number":
             arabic_hadith.get("hadithnumber")
             or bengali_hadith.get("hadithnumber")
-            or ""
-        ),
+            or "",
 
-        "arabic_number": (
+        "arabic_number":
             arabic_hadith.get("arabicnumber")
             or bengali_hadith.get("arabicnumber")
-            or ""
-        ),
+            or "",
 
-        "arabic": arabic_hadith.get("text", ""),
+        "arabic":
+            arabic_hadith.get("text", ""),
 
-        "bengali": bengali_hadith.get("text", ""),
+        "bengali":
+            bengali_hadith.get("text", ""),
 
-        "book": book_name,
+        "book":
+            book_name,
 
-        "reference": (
-            arabic_hadith.get("reference")
-            or bengali_hadith.get("reference")
-            or {}
-        ),
+        "reference":
+            reference,
 
-        "grades": (
-            arabic_hadith.get("grades")
-            or bengali_hadith.get("grades")
-            or []
-        ),
+        "grades":
+            grades,
 
-        "source": "fawazahmed0/hadith-api"
+        "source":
+            "fawazahmed0/hadith-api"
     }
 
 
-# ---------------------------------------------------------
-# Single Hadith
-# ---------------------------------------------------------
+# =========================================================
+# SINGLE HADITH
+# =========================================================
 
 def get_hadith(book, number):
 
@@ -237,8 +436,15 @@ def get_hadith(book, number):
     except Exception:
         bengali_data = {}
 
-    arabic_hadiths = arabic_data.get("hadiths", [])
-    bengali_hadiths = bengali_data.get("hadiths", [])
+    arabic_hadiths = arabic_data.get(
+        "hadiths",
+        []
+    )
+
+    bengali_hadiths = bengali_data.get(
+        "hadiths",
+        []
+    )
 
     arabic_hadith = (
         arabic_hadiths[0]
@@ -259,25 +465,35 @@ def get_hadith(book, number):
     )
 
 
-# ---------------------------------------------------------
-# Home
-# ---------------------------------------------------------
+# =========================================================
+# HOME
+# =========================================================
 
 @app.route("/")
 def home():
 
     return jsonify({
+
         "status": "ok",
-        "message": "Hadis Proshnottor Combined API is running",
-        "version": "2.0",
-        "search": "/hadith/search?q=Allah&book=bukhari",
-        "single": "/hadith/bukhari/1"
+
+        "message":
+            "Hadis Proshnottor Combined API is running",
+
+        "version":
+            "3.0",
+
+        "search":
+            "/hadith/search?q=Allah&book=bukhari",
+
+        "single":
+            "/hadith/bukhari/1"
+
     })
 
 
-# ---------------------------------------------------------
-# Single Hadith Route
-# ---------------------------------------------------------
+# =========================================================
+# SINGLE HADITH ROUTE
+# =========================================================
 
 @app.route("/hadith/<book>/<int:number>")
 def single_hadith(book, number):
@@ -290,21 +506,29 @@ def single_hadith(book, number):
     if result is None:
 
         return jsonify({
-            "error": "Unknown book",
-            "available_books": list(BOOKS.keys())
+
+            "error":
+                "Unknown book",
+
+            "available_books":
+                list(BOOKS.keys())
+
         }), 404
 
     return jsonify(result)
 
 
-# ---------------------------------------------------------
+# =========================================================
 # SEARCH
-# ---------------------------------------------------------
+# =========================================================
 
 @app.route("/hadith/search")
 def search_hadith():
 
-    query = request.args.get("q", "").strip()
+    query = request.args.get(
+        "q",
+        ""
+    ).strip()
 
     book = request.args.get(
         "book",
@@ -314,22 +538,32 @@ def search_hadith():
     if not query:
 
         return jsonify({
-            "error": "Search query is required",
-            "example": "/hadith/search?q=Allah&book=bukhari"
+
+            "error":
+                "Search query is required",
+
+            "example":
+                "/hadith/search?q=Allah&book=bukhari"
+
         }), 400
 
     if book not in BOOKS:
 
         return jsonify({
-            "error": "Unknown book",
-            "available_books": list(BOOKS.keys())
+
+            "error":
+                "Unknown book",
+
+            "available_books":
+                list(BOOKS.keys())
+
         }), 404
 
     info = BOOKS[book]
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
     # Load Arabic edition
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
     try:
 
@@ -340,13 +574,18 @@ def search_hadith():
     except Exception as e:
 
         return jsonify({
-            "error": "Could not load Arabic hadith data",
-            "details": str(e)
+
+            "error":
+                "Could not load Arabic hadith data",
+
+            "details":
+                str(e)
+
         }), 502
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
     # Load Bengali edition
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
     try:
 
@@ -354,7 +593,7 @@ def search_hadith():
             info["bengali"]
         )
 
-    except Exception as e:
+    except Exception:
 
         bengali_data = {
             "hadiths": []
@@ -370,9 +609,9 @@ def search_hadith():
         []
     )
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
     # Bengali index
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
     bengali_by_number = {}
 
@@ -388,55 +627,66 @@ def search_hadith():
                 str(number)
             ] = h
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
     # Search variants
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
     variants = query_variants(query)
 
     results = []
 
-    # ---------------------------------------------
-    # Search
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Search Arabic + Bengali
+    # -----------------------------------------------------
 
-    for h in arabic_hadiths:
+    for arabic_hadith in arabic_hadiths:
 
-        arabic_text = h.get(
-            "text",
-            ""
-        )
-
-        number = h.get(
+        number = arabic_hadith.get(
             "hadithnumber"
         )
 
-        bengali_h = bengali_by_number.get(
-            str(number),
-            {}
+        bengali_hadith = (
+            bengali_by_number.get(
+                str(number),
+                {}
+            )
         )
 
-        bengali_text = bengali_h.get(
-            "text",
-            ""
+        arabic_text = (
+            arabic_hadith.get(
+                "text",
+                ""
+            )
         )
 
-        # Search Arabic + Bengali + Hadith number
+        bengali_text = (
+            bengali_hadith.get(
+                "text",
+                ""
+            )
+        )
+
         matched = (
+
             text_matches(
                 arabic_text,
                 variants
             )
+
             or
+
             text_matches(
                 bengali_text,
                 variants
             )
+
             or
+
             any(
-                variant in str(number).lower()
+                variant == normalize_text(
+                    str(number)
+                )
                 for variant in variants
-                if variant
             )
         )
 
@@ -445,36 +695,39 @@ def search_hadith():
 
         results.append(
             format_hadith(
-                h,
-                bengali_h,
+                arabic_hadith,
+                bengali_hadith,
                 info["name"]
             )
         )
 
-        # Search result limit
         if len(results) >= 50:
             break
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
     # Response
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
     return jsonify({
 
-        "query": query,
+        "query":
+            query,
 
-        "book": book,
+        "book":
+            book,
 
-        "count": len(results),
+        "count":
+            len(results),
 
-        "results": results
+        "results":
+            results
 
     })
 
 
-# ---------------------------------------------------------
-# Run
-# ---------------------------------------------------------
+# =========================================================
+# RUN
+# =========================================================
 
 if __name__ == "__main__":
 
